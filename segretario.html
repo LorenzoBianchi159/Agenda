@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Segretario">
+<title>Segretario IA</title>
+<style>
+:root{--bg:#f6f7f9;--c:#fff;--t:#1c1e22;--m:#6b7280;--a:#2563eb;--ko:#b91c1c;--b:#e5e7eb;--u:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--c:#1a1d23;--t:#e8eaed;--m:#9aa0a6;--a:#6ea0ff;--ko:#f87171;--b:#2b2f37;--u:#2f5fd0}}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--t);font:16px system-ui,sans-serif;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
+header{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--b)}
+h1{flex:1;font-size:17px;margin:0}
+button,input,textarea{font:inherit;color:var(--t)}
+button{background:var(--c);border:1px solid var(--b);border-radius:10px;padding:8px 12px;cursor:pointer}
+button.p{background:var(--a);color:#fff;border-color:var(--a)}
+main{flex:1;overflow:auto;padding:12px;max-width:760px;width:100%;margin:0 auto}
+.bub{max-width:85%;padding:10px 13px;border-radius:16px;margin:8px 0;white-space:pre-wrap;line-height:1.4}
+.u{background:var(--u);color:#fff;margin-left:auto;border-bottom-right-radius:4px}
+.a{background:var(--c);border:1px solid var(--b);border-bottom-left-radius:4px}
+.e{background:transparent;border:1px solid var(--ko);color:var(--ko)}
+.m{color:var(--m);font-size:14px}.chg{font-size:13px;color:var(--m);margin:-4px 0 6px 6px}
+footer{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0));border-top:1px solid var(--b);max-width:760px;width:100%;margin:0 auto}
+textarea{flex:1;background:var(--c);border:1px solid var(--b);border-radius:14px;padding:10px;resize:none;max-height:120px}
+input{width:100%;background:var(--bg);border:1px solid var(--b);border-radius:10px;padding:9px;margin:4px 0}
+.card{background:var(--c);border:1px solid var(--b);border-radius:14px;padding:12px;margin:8px 0}
+.ev{border-left:5px solid var(--a);cursor:pointer}.ev b{display:block}
+.gap{margin:2px 10px;font-size:13px;color:var(--m)}
+.nav{display:flex;align-items:center;gap:6px}.nav b{flex:1;text-align:center;text-transform:capitalize}
+h2{font-size:14px;color:var(--m);margin:16px 0 4px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+</style></head><body>
+<header><h1>🗒️ Segretario</h1><button id="bA" title="Agenda">📅</button><button id="bS" title="Impostazioni">⚙️</button></header>
+<main id="main"></main>
+<footer id="ft"><textarea id="q" rows="1" placeholder="Dimmi cosa devi fare…"></textarea><button class="p" id="go">➤</button></footer>
+<script>
+const $=s=>document.querySelector(s),p=n=>String(n).padStart(2,'0');
+const DEF={ev:[],tasks:[],learn:{},notes:[],chat:[],set:{home:'',km:0.14,pass:false,key:'',model:'gemini-2.5-flash'}};
+let S=Object.assign({},DEF,JSON.parse(localStorage.getItem('ag')||'{}'));
+S.set=Object.assign({},DEF.set,S.set);
+const save=()=>{S.chat=S.chat.slice(-40);localStorage.setItem('ag',JSON.stringify(S))};
+const key=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hm=s=>s.slice(11,16),uid=()=>Math.random().toString(36).slice(2,9);
+const CAT={allenamento:'#16a34a',università:'#2563eb',studio:'#7c3aed',pasto:'#ea580c',altro:'#6b7280'};
+let view=S.set.key?'chat':'set',cur=new Date(),busy=false,snap=null;
+const prepMin=()=>Math.round(S.learn.pasto?.avg||40);
+const addD=(s,n)=>{const d=new Date(s.slice(0,10)+'T12:00');d.setDate(d.getDate()+n);return key(d)+s.slice(10)};
+function dayEv(k){
+  const out=[];
+  for(const e of S.ev){
+    if((e.skip||[]).includes(k))continue;
+    const b=e.start.slice(0,10);
+    if(b==k){out.push(e);continue}
+    if(!e.rep||k<b)continue;
+    const n=Math.round((new Date(k+'T12:00')-new Date(b+'T12:00'))/864e5);
+    if(e.rep=='daily'||(e.rep=='weekly'&&n%7==0))out.push({...e,start:k+e.start.slice(10),end:addD(e.end,n)});
+  }
+  return out.sort((a,b)=>a.start.localeCompare(b.start));
+}
+async function ai(prompt){
+  const k=(S.set.key||'').trim();
+  if(!k)throw new Error('Manca la chiave API: aprila da ⚙️ e incollala.');
+  if(!/^[\w-]+$/.test(k))throw new Error('La chiave API contiene spazi o caratteri non validi: ricopiala da AI Studio e salva di nuovo.');
+  let r;
+  try{r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${S.set.model||'gemini-2.5-flash'}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json'}})})}
+  catch(e){throw new Error(/claude/i.test(location.hostname)?'Questa pagina è aperta dentro Claude, che blocca le chiamate a Gemini. Aprila dal tuo link GitHub Pages.':'Impossibile contattare Gemini (errore di rete). Controlla connessione, VPN/adblock/filtri del Wi-Fi e che la pagina sia aperta dal tuo link GitHub.')}
+  let j={};try{j=await r.json()}catch(e){}
+  if(!r.ok){const m=j.error?.message||'';
+    if(r.status==400&&/key/i.test(m))throw new Error('Chiave API non valida: ricopiala da AI Studio senza spazi.');
+    if(r.status==403)throw new Error('Chiave non autorizzata (403): controlla in AI Studio che sia attiva e senza restrizioni.');
+    if(r.status==404)throw new Error('Modello non trovato: cambia il campo Modello in ⚙️ (es. gemini-2.5-flash).');
+    if(r.status==429)throw new Error('Limite di richieste gratuite raggiunto: riprova tra un minuto, o domani se è il limite giornaliero.');
+    if(r.status>=500)throw new Error('Gemini è sovraccarico (errore '+r.status+'): riprova tra poco.');
+    throw new Error('Errore '+r.status+(m?': '+m:''))}
+  try{return JSON.parse(j.candidates[0].content.parts[0].text)}
+  catch(e){throw new Error('Risposta di Gemini vuota o non leggibile: riprova riformulando.')}
+}
+function ctx(){
+  const now=new Date(),from=key(new Date(+now-864e5)),to=key(new Date(+now+21*864e5));
+  const evs=S.ev.filter(e=>e.rep||(e.start.slice(0,10)>=from&&e.start.slice(0,10)<=to)).map(({id,title,start,end,loc,cat,rep,skip,actual})=>({id,title,start,end,loc,cat,rep,skip,actual}));
+  const pend=S.ev.filter(e=>e.cat=='pasto'&&!e.rep&&!e.actual&&new Date(e.end)<now).map(e=>({id:e.id,title:e.title}));
+  return `ADESSO: ${now.toLocaleString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})} (oggi = ${key(now)}).
+CASA: ${S.set.home||'non indicata'}. AUTO: ${S.set.km} €/km di carburante. ABBONAMENTO trasporti: ${S.set.pass?'SÌ (costo 0)':'no'}.
+PREPARAZIONE PASTO stimata: ${prepMin()} min (media reale imparata: ${JSON.stringify(S.learn)}).
+COSE CHE SAI DI LUI: ${JSON.stringify(S.notes)}
+EVENTI ("rep"=ricorrenza daily/weekly, "start"=prima occorrenza, "skip"=giorni esclusi): ${JSON.stringify(evs)}
+DA INCASTRARE: ${JSON.stringify(S.tasks)}
+PASTI CONCLUSI SENZA TEMPO REALE DI PREPARAZIONE: ${JSON.stringify(pend)}`;
+}
+async function ask(q){
+  q=q.trim();if(!q||busy)return;
+  const hist=S.chat.filter(m=>m.r!='e').slice(-8).map(m=>(m.r=='u'?'Utente: ':'Segretario: ')+m.t).join('\n');
+  S.chat.push({r:'u',t:q});$('#q').value='';busy=true;snap=null;render();
+  try{
+    const r=await ai(ctx()+`\n\nCONVERSAZIONE RECENTE:\n${hist}\n\nUTENTE ORA: ${q}\n
+Sei il segretario personale di uno studente (Reggio Emilia / Parma). Lui ti dice le cose in linguaggio naturale e TU gestisci tutta l'agenda: aggiungi, sposti, elimini e incastri impegni e attività nei momenti migliori (dieta, allenamenti, lezioni, studio, pasti, riposo). Regole:
+- Italiano, breve, diretto, dai del tu.
+- Dopo ogni modifica verifica la fattibilità degli spostamenti tra luoghi diversi: tempi e costi in euro (auto col costo/km indicato, treno, bus, a piedi; abbonamento = 0). Se è infattibile dillo, elenca le alternative con costi e applica la migliore (o chiedi se è ambiguo).
+- Nei pasti considera il tempo di preparazione.
+- Se manca un dato essenziale (orario, luogo) fai UNA sola domanda breve invece di inventare.
+- Se ci sono pasti conclusi senza tempo reale, chiedi una volta "quanto ci hai messo a cucinare?"; quando risponde usa setActual.
+- Impegni che si ripetono: un solo evento con "rep". Preferenze stabili (orari pasti, sonno, mezzi preferiti, indirizzi) salvale con remember.
+Rispondi SOLO con JSON: {"message":"testo per l'utente","actions":[
+{"op":"add","event":{"title":"","start":"YYYY-MM-DDTHH:mm","end":"YYYY-MM-DDTHH:mm","loc":"","cat":"allenamento|università|studio|pasto|altro","rep":"weekly|daily (solo se si ripete)"}},
+{"op":"update","id":"..","event":{campi da cambiare}},
+{"op":"delete","id":"..","date":"YYYY-MM-DD solo per togliere un singolo giorno di una ricorrenza"},
+{"op":"addTask","title":"","min":60,"due":"opzionale"},{"op":"doneTask","id":".."},
+{"op":"setActual","id":"..","minutes":0},{"op":"remember","text":""},
+{"op":"setSetting","home":"","km":0.14,"pass":true}]}. actions può essere vuota.`);
+    snap=JSON.stringify([S.ev,S.tasks,S.learn,S.notes,S.set]);
+    let n=0;
+    for(const a of r.actions||[]){
+      try{
+        if(a.op=='add'&&a.event?.start&&a.event?.title){const v={id:uid(),loc:'',cat:'altro',...a.event};if(!v.end)v.end=addD(v.start,0).slice(0,11)+p((+hm(v.start).slice(0,2)+1)%24)+':'+hm(v.start).slice(3);if(!['daily','weekly'].includes(v.rep))delete v.rep;S.ev.push(v);n++}
+        else if(a.op=='update'){const e=S.ev.find(x=>x.id==a.id);if(e){Object.assign(e,a.event);n++}}
+        else if(a.op=='delete'){const e=S.ev.find(x=>x.id==a.id);if(e){if(e.rep&&a.date)(e.skip=e.skip||[]).push(a.date);else S.ev=S.ev.filter(x=>x.id!=a.id);n++}}
+        else if(a.op=='addTask'){S.tasks.push({id:uid(),title:a.title,min:a.min||60,due:a.due||''});n++}
+        else if(a.op=='doneTask'){S.tasks=S.tasks.filter(x=>x.id!=a.id);n++}
+        else if(a.op=='setActual'){const e=S.ev.find(x=>x.id==a.id),v=+a.minutes;if(e&&v){e.actual=v;const l=S.learn.pasto||{avg:40,n:0};l.avg=(l.avg*l.n+v)/(l.n+1);l.n++;S.learn.pasto=l;n++}}
+        else if(a.op=='remember'&&a.text&&!S.notes.includes(a.text)){S.notes.push(a.text);n++}
+        else if(a.op=='setSetting'){for(const f of ['home','km','pass'])if(a[f]!==undefined)S.set[f]=a[f];n++}
+      }catch(e){}
+    }
+    S.chat.push({r:'a',t:r.message||'Fatto.',n});
+  }catch(e){S.chat.push({r:'e',t:e.message});snap=null}
+  busy=false;save();render();
+}
+function undo(){[S.ev,S.tasks,S.learn,S.notes,S.set]=JSON.parse(snap);snap=null;S.chat.push({r:'a',t:'↩︎ Ho annullato le ultime modifiche.',n:0});save();render()}
+function chat(){
+  if(!S.chat.length)return `<div class="m" style="text-align:center;margin-top:40px;line-height:1.6">Ciao! Sono il tuo segretario.<br>Dimmi cosa devi fare e me ne occupo io.<br><br><i>«Ogni giovedì dalle 15 alle 17 sono a casa»<br>«Domani alle 7 mi alleno a Reggio e alle 8:30 ho lezione a Parma»<br>«Trovami 3 ore per studiare fisica questa settimana»</i></div>`;
+  let h='';
+  S.chat.forEach((m,i)=>{
+    h+=`<div class="bub ${m.r}">${esc(m.t)}</div>`;
+    if(m.r=='a'&&m.n)h+=`<div class="chg">✓ ${m.n} ${m.n==1?'modifica applicata':'modifiche applicate'}${i==S.chat.length-1&&snap?' · <a href="#" onclick="undo();return false">Annulla</a>':''}</div>`;
+  });
+  if(busy)h+=`<div class="bub a m">Ci penso…</div>`;
+  return h;
+}
+function agenda(){
+  const k=key(cur),evs=dayEv(k);
+  let h=`<div class="nav"><button onclick="mv(-1)">‹</button><b>${cur.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'})}</b><button onclick="mv(1)">›</button><button onclick="cur=new Date();render()">Oggi</button></div>`;
+  if(!evs.length)h+=`<p class="m" style="text-align:center;margin-top:30px">Nessun impegno.</p>`;
+  evs.forEach((e,i)=>{
+    const a=evs[i-1];
+    if(a){const f=Math.round((new Date(e.start)-new Date(a.end))/6e4);h+=`<div class="gap">${f} min liberi${a.loc&&e.loc&&a.loc!=e.loc?' · 📍 cambio luogo':''}</div>`}
+    h+=`<div class="card ev" style="border-left-color:${CAT[e.cat]||CAT.altro}" onclick="fill('${e.id}')"><b>${esc(e.title)}${e.rep?' 🔁':''}</b><span class="m">${hm(e.start)}–${hm(e.end)} · ${esc(e.cat)}${e.loc?' · 📍'+esc(e.loc):''}${e.cat=='pasto'?' · 🍳 prep ~'+(e.actual||prepMin())+' min':''}</span></div>`;
+  });
+  if(S.tasks.length)h+=`<h2>DA INCASTRARE</h2>`+S.tasks.map(t=>`<div class="card">${esc(t.title)} <span class="m">· ${t.min} min${t.due?' · entro '+esc(t.due):''}</span></div>`).join('');
+  return h+`<p class="m">Tocca un impegno per chiedere al segretario di modificarlo.</p>`;
+}
+function sett(){
+  return `<h2>CHIAVE GEMINI</h2><div class="card"><input id="s_k" type="password" placeholder="Chiave API (da aistudio.google.com)" value="${esc(S.set.key)}">
+<input id="s_m" placeholder="Modello" value="${esc(S.set.model)}">
+<input id="s_h" placeholder="Indirizzo di casa (puoi dirlo anche al segretario)" value="${esc(S.set.home)}">
+<div class="row"><input id="s_km" type="number" step="0.01" placeholder="€/km auto" value="${S.set.km}"><label style="align-self:center"><input id="s_p" type="checkbox" style="width:auto" ${S.set.pass?'checked':''}> Abbonamento</label></div>
+<button class="p" onclick="saveSet()">Salva</button></div>
+<h2>COSA RICORDA DI TE</h2><div class="card m">${S.notes.length?S.notes.map(esc).join('<br>• ').replace(/^/,'• '):'Ancora niente: impara dalle tue conversazioni.'}</div>
+<h2>DATI</h2><div class="card"><button onclick="exp()">Esporta backup</button> <button onclick="$('#imp').click()">Importa</button> <button onclick="if(confirm('Cancellare la conversazione?')){S.chat=[];save();render()}">Svuota chat</button><input id="imp" type="file" hidden onchange="imp(this)"></div>`;
+}
+function saveSet(){Object.assign(S.set,{key:$('#s_k').value.trim(),model:$('#s_m').value.trim()||'gemini-2.5-flash',home:$('#s_h').value.trim(),km:+$('#s_km').value||0.14,pass:$('#s_p').checked});save();view='chat';render()}
+function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));a.download='segretario-backup.json';a.click()}
+function imp(i){const f=i.files[0];if(f)f.text().then(t=>{S=Object.assign({},DEF,JSON.parse(t));save();render()})}
+function mv(n){cur.setDate(cur.getDate()+n);render()}
+function fill(id){const e=S.ev.find(x=>x.id==id);if(!e)return;view='chat';render();$('#q').value=`Riguardo a «${e.title}»: `;$('#q').focus()}
+function render(){
+  $('#bA').textContent=view=='agenda'?'💬':'📅';
+  $('#ft').style.display=view=='chat'||view=='agenda'?'flex':'none';
+  $('#main').innerHTML=view=='chat'?chat():view=='agenda'?agenda():sett();
+  if(view=='chat')$('#main').scrollTop=$('#main').scrollHeight;
+  $('#go').disabled=busy;
+}
+$('#bA').onclick=()=>{view=view=='agenda'?'chat':'agenda';render()};
+$('#bS').onclick=()=>{view=view=='set'?'chat':'set';render()};
+$('#go').onclick=()=>{view='chat';ask($('#q').value)};
+$('#q').addEventListener('keydown',e=>{if(e.key=='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();$('#go').click()}});
+$('#q').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,120)+'px'});
+render();
+</script></body></html>
